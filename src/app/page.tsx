@@ -8,6 +8,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { generateStory } from '@/ai/flows/generate-story';
 import { voiceCommandHelp } from '@/ai/flows/voice-command-help';
 import { useToast } from '@/hooks/use-toast';
+import { speechToText } from '@/ai/flows/speech-to-text';
+import { textToSpeech } from '@/ai/flows/text-to-speech';
 
 type Status = 'idle' | 'recording' | 'recognizing' | 'speaking' | 'error' | 'paused';
 type LogEntry = { type: 'user' | 'bot'; text: string };
@@ -49,16 +51,8 @@ export default function Home() {
     }
     setStatus('speaking');
     try {
-      const response = await fetch('http://127.0.0.1:8081/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!response.ok) throw new Error('TTS service failed');
-      
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
+      const response = await textToSpeech({text});
+      const audioUrl = response.audio;
 
       if (audioPlayerRef.current) {
         audioPlayerRef.current.pause();
@@ -86,9 +80,9 @@ export default function Home() {
     } catch (error) {
       console.error(error);
       setStatus('error');
-      const errorMessage = "Не могу связаться с сервисом озвучивания. Попробуйте позже.";
+      const errorMessage = "Не могу озвучить ответ. Попробуйте позже.";
       addToLog({ type: 'bot', text: errorMessage });
-      toast({ title: "Ошибка TTS", description: "Проверьте, запущен ли ваш локальный сервер на порту 8081.", variant: 'destructive' });
+      toast({ title: "Ошибка TTS", description: "Произошла ошибка при синтезе речи.", variant: 'destructive' });
     }
   }, [status, toast]);
   
@@ -179,27 +173,24 @@ export default function Home() {
         audioChunksRef.current = [];
         
         try {
-          const formData = new FormData();
-          formData.append('audio', audioBlob);
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = async () => {
+            const base64Audio = reader.result as string;
+            const result = await speechToText({ audio: base64Audio });
 
-          const response = await fetch('http://127.0.0.1:8081/stt', {
-            method: 'POST',
-            body: formData,
-          });
-          if (!response.ok) throw new Error('STT service failed');
-
-          const result = await response.json();
-          if (result.text) {
-            await processCommand(result.text);
-          } else {
-            playAudioResponse("Я ничего не услышала. Попробуйте еще раз.");
+            if (result.text) {
+              await processCommand(result.text);
+            } else {
+              playAudioResponse("Я ничего не услышала. Попробуйте еще раз.");
+            }
           }
         } catch (error) {
             console.error(error);
             setStatus('error');
             const errorMessage = "Не могу распознать речь. Попробуйте позже.";
             addToLog({ type: 'bot', text: errorMessage });
-            toast({ title: "Ошибка STT", description: "Проверьте, запущен ли ваш локальный сервер на порту 8081.", variant: 'destructive' });
+            toast({ title: "Ошибка STT", description: "Произошла ошибка при распознавании речи.", variant: 'destructive' });
         }
       };
 
